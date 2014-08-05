@@ -7,7 +7,11 @@
 #include "string.h"
 #include "EthernetInterface.h"
 
-#define SAMPLE_BUFFER_LENGTH 32
+#define NUM_SAMPLES 1024
+#define BYTES_PER_SAMPLE sizeof(uint16_t) / sizeof(char)
+#define NUM_CHANNELS 4
+#define SAMPLE_BUFF_LEN     NUM_SAMPLES*NUM_CHANNELS
+#define SAMPLE_BUFF_BYTES   SAMPLE_BUFF_LEN * BYTES_PER_SAMPLE
 
 DigitalOut led1(LED1);
 DigitalOut led2(LED2);
@@ -41,8 +45,8 @@ int main() {
     // end up in this buffer "interleaved". So you will want
     // a buffer twice this size to a real life given sample
     // frequency. See the printf() output for details.
-    uint32_t adcInputBuffer[SAMPLE_BUFFER_LENGTH];    
-    memset(adcInputBuffer, 0, sizeof(adcInputBuffer));
+    uint16_t adcInputBuffer[SAMPLE_BUFF_LEN];    
+    memset(adcInputBuffer, 0, SAMPLE_BUFF_BYTES);
     
     // We use the ADC irq to trigger DMA and the manual says
     // that in this case the NVIC for ADC must be disabled.
@@ -53,21 +57,26 @@ int main() {
     LPC_SC->PCLKSEL0 &= ~(3UL << 24); // PCLK = CCLK/4 96M/4 = 24MHz
     
     // Enable the ADC, 12MHz,  ADC0.0 & .1
-    LPC_ADC->ADCR  = (1UL << 21) | (1UL << 8) | (3UL << 0); 
+    //LPC_ADC->ADCR  = (1UL << 21) | (1UL << 8) | (3UL << 0); 
+    LPC_ADC->ADCR  = (1UL << 21) | (1UL << 8) | (15UL << 0); 
     
     // Set the pin functions to ADC
     LPC_PINCON->PINSEL1 &= ~(3UL << 14);  /* P0.23, Mbed p15. */
     LPC_PINCON->PINSEL1 |=  (1UL << 14);
     LPC_PINCON->PINSEL1 &= ~(3UL << 16);  /* P0.24, Mbed p16. */
     LPC_PINCON->PINSEL1 |=  (1UL << 16);
+    LPC_PINCON->PINSEL1 &= ~(3UL << 18);  /* P0.25, Mbed p17. */
+    LPC_PINCON->PINSEL1 |=  (1UL << 18);
+    LPC_PINCON->PINSEL1 &= ~(3UL << 20);  /* P0.26, Mbed p18. */
+    LPC_PINCON->PINSEL1 |=  (1UL << 20);
   
     // Prepare an ADC configuration.
     MODDMA_Config *conf = new MODDMA_Config;
     conf
      ->channelNum    ( MODDMA::Channel_0 )
      ->srcMemAddr    ( 0 )
-     ->dstMemAddr    ( (uint32_t)adcInputBuffer )
-     ->transferSize  ( SAMPLE_BUFFER_LENGTH )
+     ->dstMemAddr    ( (uint32_t)adcInputBuffer )  //NOT a dereference, just storing a 32bit pointer value as int
+     ->transferSize  ( SAMPLE_BUFF_LEN )
      ->transferType  ( MODDMA::p2m )
      ->transferWidth ( MODDMA::word )
      ->srcConn       ( MODDMA::ADC )
@@ -90,22 +99,16 @@ int main() {
 
     // Enable burst mode on inputs 0 and 1.
     LPC_ADC->ADCR |= (1UL << 16);
-    
-    char out_buffer[SAMPLE_BUFFER_LENGTH];
+
     
     while (1) {
         // When transfer complete do this block.
         if (dmaTransferComplete) {
             delete conf; // No memory leaks, delete the configuration.
             dmaTransferComplete = false;
-            for (int i = 0; i < SAMPLE_BUFFER_LENGTH; i++) {
-                //int channel = (adcInputBuffer[i] >> 24) & 0x7;
-                int iVal = (adcInputBuffer[i] >> 4) & 0xFFF;
-                double fVal = 3.3 * (double)((double)iVal) / ((double)0x1000); // scale to 0v to 3.3v
-                memcpy(&out_buffer,&fVal,sizeof(fVal));
-            }
         }
-        sock.sendTo(broadcast, out_buffer, sizeof(out_buffer));             
+        //sock.sendTo(broadcast, out_buffer, sizeof(out_buffer));             
+        sock.sendTo(broadcast, (char*)adcInputBuffer, SAMPLE_BUFF_BYTES);      
         wait(0.25);        
     }
 }
